@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# артефакты генерации и обучения
+temp_chunks/
+*.parquet
+forward_7p_40_sig_weights/
+*.pt
