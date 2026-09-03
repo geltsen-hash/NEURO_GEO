@@ -2,11 +2,13 @@
 
 Читает dataset_7p_splitZX_40f.parquet, делит train/val по базовой точке (зеркальная пара
 не разъезжается между частями), учит MLP 7-512-1024-512-256-40 с GELU и ReduceLROnPlateau.
-В SAVE_DIR кладёт веса лучшей эпохи (.txt для C++-инференса и .pt), параметры скейлеров,
-preprocess_meta.json и val_mae_physical.txt — ошибку по каналам в дБ и градусах.
+В SAVE_DIR кладёт веса лучшей эпохи (FWD_*.txt для C++-инференса и .pt), параметры
+скейлеров, preprocess_meta.json и val_mae_physical.txt — ошибку по каналам в дБ и градусах.
+
+SAVE_DIR — общий каталог движка: сюда же обратное обучение кладёт INV_*.txt, и именно
+этот путь передаётся в InitEngine. Требует pipeline_common.py рядом со скриптом.
 """
 import copy
-import json
 import os
 import time
 
@@ -15,10 +17,11 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sklearn.preprocessing import StandardScaler
+
+import pipeline_common as pc
 
 FILE_NAME = 'dataset_7p_splitZX_40f.parquet'
-SAVE_DIR = 'forward_7p_40_sig_weights'
+SAVE_DIR = pc.ENGINE_DIR
 BATCH_SIZE = 8192
 EPOCHS = 250
 VAL_SPLIT = 0.1
@@ -34,7 +37,7 @@ SEED = 42
 #               up<->dn, D_up<->D_dn, alpha->180-alpha, Amp->1/Amp, Phase->-Phase).
 SPLIT_MODE = 'group'
 
-AMP_INDICES = [4, 6, 8, 10, 12, 14, 16, 18, 24, 26, 28, 30, 32, 34, 36, 38]
+AMP_INDICES = pc.AMP_INDICES
 
 
 class EmSurrogateNet7D_40CH(nn.Module):
@@ -55,48 +58,6 @@ class EmSurrogateNet7D_40CH(nn.Module):
         return self.fc5(x)
 
 
-def group_ids(X):
-    """Номер базовой точки: одинаков у образца и его зеркала.
-
-    Зеркало: Rh_up<->Rh_dn, D_up<->D_dn, alpha->180-alpha (Rh_pl, Rv_pl не меняются).
-    Упорядочиваем верх/низ по (Rh, D) — получаем ключ, инвариантный к зеркалу.
-    Alpha в ключ не входит: 180-alpha считается в плавающей точке и у пары
-    может отличаться на единицу младшего разряда, а шести остальных параметров
-    для идентификации точки достаточно.
-    """
-    Rh_up, Rh_pl, Rv_pl, Rh_dn, D_up, D_dn, _alpha = X.T
-    swap = (Rh_up > Rh_dn) | ((Rh_up == Rh_dn) & (D_up > D_dn))
-    canon = np.column_stack((
-        np.where(swap, Rh_dn, Rh_up), np.where(swap, D_dn, D_up),
-        Rh_pl, Rv_pl,
-        np.where(swap, Rh_up, Rh_dn), np.where(swap, D_up, D_dn),
-    )).astype(np.float32)
-    view = np.ascontiguousarray(canon).view([('', np.float32)] * canon.shape[1]).ravel()
-    _uniq, inverse = np.unique(view, return_inverse=True)
-    return inverse
-
-
-def split_indices(X_raw, rng):
-    n = X_raw.shape[0]
-    if SPLIT_MODE == 'canonical':
-        keep = np.flatnonzero(X_raw[:, 6] <= 90.0)
-        print(f'   режим canonical: оставлено {keep.size} из {n} строк (зеркала отброшены)')
-        perm = rng.permutation(keep.size)
-        n_val = int(round(keep.size * VAL_SPLIT))
-        return keep[perm[n_val:]], keep[perm[:n_val]]
-
-    inverse = group_ids(X_raw)
-    n_groups = int(inverse.max()) + 1
-    perm = rng.permutation(n_groups)
-    n_val_groups = int(round(n_groups * VAL_SPLIT))
-    val_groups = np.zeros(n_groups, dtype=bool)
-    val_groups[perm[:n_val_groups]] = True
-    is_val = val_groups[inverse]
-    print(f'   режим group: {n_groups} базовых точек на {n} строк, '
-          f'в валидации {n_val_groups} точек ({is_val.sum()} строк)')
-    return np.flatnonzero(~is_val), np.flatnonzero(is_val)
-
-
 def eval_val(model, X_v, Y_v, criterion, batch_size):
     """Возвращает MSE в масштабированном пространстве и сумму |ошибок| по каналам."""
     model.eval()
@@ -109,18 +70,6 @@ def eval_val(model, X_v, Y_v, criterion, batch_size):
             total_loss += criterion(out, b_y).item() * len(b_x)
             abs_err += (out - b_y).abs().sum(dim=0).double()
     return total_loss / len(X_v), (abs_err / len(X_v)).cpu().numpy()
-
-
-def physical_mae(mae_scaled, scaler_Y, headers):
-    """MAE каналов в единицах прибора: амплитуды в дБ, фазы и ZZ в градусах."""
-    mae_units = mae_scaled * scaler_Y.scale_          # обратно в единицы датасета
-    rows = []
-    for i, name in enumerate(headers):
-        if i in AMP_INDICES:
-            rows.append((name, 20.0 * mae_units[i], 'дБ'))   # канал хранится как log10|S|
-        else:
-            rows.append((name, mae_units[i], 'град'))
-    return rows
 
 
 def main():
@@ -143,33 +92,23 @@ def main():
         X_raw, Y_raw = X_raw[finite], Y_raw[finite]
 
     print('3. Разделение по базовой точке...')
-    idx_train, idx_val = split_indices(X_raw, rng)
+    idx_train, idx_val = pc.split_indices(X_raw, rng, VAL_SPLIT, SPLIT_MODE)
 
     print('4. Логарифмирование УЭС и амплитуд...')
-    X_data = X_raw.copy()
-    X_data[:, 0:4] = np.log10(np.maximum(X_data[:, 0:4], 1e-5))
-    Y_data = Y_raw.copy()
-    Y_data[:, AMP_INDICES] = np.log10(np.maximum(Y_data[:, AMP_INDICES], 1e-8))
+    X_data = pc.preprocess_X(X_raw)
+    Y_data = pc.preprocess_Y(Y_raw)
 
     print('5. Масштабирование (StandardScaler, fit только на train)...')
-    scaler_X = StandardScaler().fit(X_data[idx_train])
-    scaler_Y = StandardScaler().fit(Y_data[idx_train])
+    scaler_X, scaler_Y = pc.fit_scalers(X_data, Y_data, idx_train)
     X_scaled = scaler_X.transform(X_data).astype(np.float32)
     Y_scaled = scaler_Y.transform(Y_data).astype(np.float32)
 
-    np.savetxt(os.path.join(SAVE_DIR, 'scaler_X_mean.txt'), scaler_X.mean_)
-    np.savetxt(os.path.join(SAVE_DIR, 'scaler_X_scale.txt'), scaler_X.scale_)
-    np.savetxt(os.path.join(SAVE_DIR, 'scaler_Y_mean.txt'), scaler_Y.mean_)
-    np.savetxt(os.path.join(SAVE_DIR, 'scaler_Y_scale.txt'), scaler_Y.scale_)
-    with open(os.path.join(SAVE_DIR, 'preprocess_meta.json'), 'w', encoding='utf-8') as fh:
-        json.dump({
-            'x_log10_indices': [0, 1, 2, 3],
-            'y_log10_indices': AMP_INDICES,
-            'y_headers': headers,
-            'activation': 'gelu_erf',
-            'split_mode': SPLIT_MODE,
-            'seed': SEED,
-        }, fh, ensure_ascii=False, indent=2)
+    pc.save_scalers(SAVE_DIR, scaler_X, scaler_Y)
+    pc.write_meta(SAVE_DIR, {
+        'y_headers': headers,
+        'split_mode': SPLIT_MODE,
+        'forward_seed': SEED,
+    })
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'\n6. Трансфер в {device}...')
@@ -233,7 +172,7 @@ def main():
     print(f'Обучение заняло {(time.time() - train_start)/60:.1f} минут.')
 
     print('\n7. Точность в физических единицах (val, лучшая эпоха):')
-    rows = physical_mae(best_mae_scaled, scaler_Y, headers)
+    rows = pc.physical_mae(best_mae_scaled, scaler_Y.scale_, headers)
     with open(os.path.join(SAVE_DIR, 'val_mae_physical.txt'), 'w', encoding='utf-8') as fh:
         fh.write('channel\tMAE\tunit\n')
         for name, val, unit in rows:
@@ -248,12 +187,9 @@ def main():
 
     print('\n8. Экспорт ЛУЧШИХ весов...')
     model.load_state_dict(best_state)
-    for i in range(1, 6):
-        layer = getattr(model, f'fc{i}')
-        np.savetxt(os.path.join(SAVE_DIR, f'W{i}.txt'), layer.weight.detach().cpu().numpy().T)
-        np.savetxt(os.path.join(SAVE_DIR, f'b{i}.txt'), layer.bias.detach().cpu().numpy())
+    pc.export_layers(model, SAVE_DIR, 'FWD_')      # имена, которые читает InitEngine
     torch.save(best_state, os.path.join(SAVE_DIR, 'best_forward_model.pt'))
-    print('Готово!')
+    print(f'Готово! Артефакты в {SAVE_DIR}: FWD_W1..5.txt, FWD_b1..5.txt, скейлеры, .pt')
 
 
 if __name__ == '__main__':
