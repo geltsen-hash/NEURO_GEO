@@ -102,7 +102,7 @@ def calculate_point(params):
         Vzz_a, Vzx_a = get_fields(Z_TX[t_a], Z_RX_ZX[r_a])
         Vzz_b, Vzx_b = get_fields(Z_TX[t_b], Z_RX_ZX[r_b])
         S_a = np.conj((Vzz_a - Vzx_a) / (Vzz_a + Vzx_a))
-        S_b = np.conj((Vzz_b - (-Vzx_b)) / (Vzz_b + (-Vzx_b)))
+        S_b = np.conj((Vzz_b + Vzx_b) / (Vzz_b - Vzx_b))
         f1_sig.extend([
             float(np.abs(S_a[0])), float(np.angle(S_a[0], deg=True)),
             float(np.abs(S_b[0])), float(np.angle(S_b[0], deg=True))
