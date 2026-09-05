@@ -81,11 +81,27 @@ best_forward_model.pt, PINN_40sig_7p.pt, preprocess_meta.json, val_mae_physical.
 ## C++-инференс
 
 `dll/NEURO_40_7.cpp` — drop-in замена исходного файла в проекте Visual Studio (Eigen, toolset v141, x64).
-API: `InitEngine(dir, max_steps, lr)`, `RunPGDInversion(signals40, min7, max7, out7)`, плюс диагностические
-`IsEngineReady()` и `GetLastErrorText()`. Вызов инверсии до успешного `InitEngine` больше не обращается к
-пустым матрицам: выход заполняется `NaN` и функция возвращается. Чтение весов строгое — отсутствующий файл,
-нехватка значений, лишние значения и не-finite числа приводят к `InitEngine == false` с текстом ошибки.
+API:
+
+* `InitEngine(dir, max_steps, lr)` — загрузка `engine_weights/` (`FWD_*`, `INV_*`, скейлеры).
+* `RunPGDInversion(signals40, min7, max7, out7)` — legacy-инверсия, сохраняет старую сигнатуру.
+* `RunPGDInversionEx(signals40, min7, max7, topology_mode, m1_geo_7, out7)` — инверсия с топологической
+  моделью `0/1/2`; для `mode == 2` в `m1_geo_7` передаётся результат модели `1` (raw_geo_7).
+* `RunTopologyInversion(signals40, min7, max7, out14)` — расчёт всех трёх моделей за один вызов,
+  возвращает 14 чисел (без MD): `Rh_0,Rv_0,Rh_1,Rv_1,Rh_up_1,Rh_dn_1,D_up_1,D_dn_1,Rh_2,Rv_2,Rh_up_2,Rh_dn_2,D_up_2,D_dn_2`.
+* `IsEngineReady()` и `GetLastErrorText()` — диагностика.
+
+Семантика моделей совпадает с `test/test_PINN_40sig_7p.py`:
+
+* `0` — нет границ (`D_up = D_dn = 4.0`, `Rh_up = Rh_dn = Rh_pl`).
+* `1` — одна ближайшая граница; дальняя фиксируется `D = 4.0 м`, `Rh = Rh_pl`.
+* `2` — две границы; ближайшая граница из модели `1` заморожена, другая оптимизируется.
+
+Вызов инверсии до успешного `InitEngine` больше не обращается к пустым матрицам: выход заполняется `NaN`
+и функция возвращается. Чтение весов строгое — отсутствующий файл, нехватка значений, лишние значения
+и не-finite числа приводят к `InitEngine == false` с текстом ошибки.
 
 Проверено на собранной библиотеке: паритет инверсии с эталоном на numpy до 2e-7, вызов без инициализации
 возвращает `NaN` без зависания, обрезанный `FWD_W2.txt` отвергается, каталог `engine_weights/` из двух
-train-скриптов загружается как есть.
+train-скриптов загружается как есть, `RunTopologyInversion` на smoke-весах совпадает с `test_PINN_40sig_7p.py`
+в пределах 4e-2 (точность ограничена 3-эпоховым smoke-обучением).
