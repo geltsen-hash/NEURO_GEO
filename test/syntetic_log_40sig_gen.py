@@ -22,9 +22,8 @@ THICKNESS = 3.0
 ALPHA = 85.0
 START_DEPTH = 5.0
 
-# --- НАСТРОЙКИ ШУМА (физические единицы прибора) ---
-NOISE_AMP_DB = 0.05      # СКО шума амплитудных каналов, дБ
-NOISE_PHASE_DEG = 0.2    # СКО шума фазовых и ZZ-каналов, градусы
+# --- НАСТРОЙКИ ШУМА (согласно статье: мультипликативный 0.5%) ---
+NOISE_STD = 0.005        # СКО относительного шума (0.5% от значения)
 # =======================================
 
 FILE_NAME = 'synthetic_well_log_40ch.csv'
@@ -132,8 +131,7 @@ def build_medium_at_md(md):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Генератор синтетического каротажа 40 каналов / 7 параметров.')
     parser.add_argument('--out', default=FILE_NAME, help='Путь к выходному CSV')
-    parser.add_argument('--noise-amp-db', type=float, default=NOISE_AMP_DB, help='СКО шума амплитуд, дБ')
-    parser.add_argument('--noise-phase-deg', type=float, default=NOISE_PHASE_DEG, help='СКО шума фаз, градусы')
+    parser.add_argument('--noise-std', type=float, default=NOISE_STD, help='СКО относительного шума')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     args = parser.parse_args()
 
@@ -166,20 +164,15 @@ if __name__ == '__main__':
 
     df = pd.DataFrame(results, columns=header_geo + headers_sig)
 
-    # --- НАЛОЖЕНИЕ ШУМА ---
-    print(f'Наложение физического шума: амплитуды {args.noise_amp_db} дБ, '
-          f'фазы/ZZ {args.noise_phase_deg} град...')
+    # --- НАЛОЖЕНИЕ ШУМА (мультипликативный, согласно статье) ---
+    print(f'Наложение относительного шума: СКО = {args.noise_std} '
+          f'(= {args.noise_std*100:.1f}%)')
     sig_columns = df.columns[8:]
     sig_values = df[sig_columns].values.astype(np.float64, copy=True)
 
-    n_points = sig_values.shape[0]
-    amp_noise = 10 ** (np.random.normal(
-        0.0, args.noise_amp_db / 20.0, size=(n_points, len(AMP_INDICES))))
-    phase_noise = np.random.normal(
-        0.0, args.noise_phase_deg, size=(n_points, len(PHASE_INDICES)))
-
-    sig_values[:, AMP_INDICES] *= amp_noise
-    sig_values[:, PHASE_INDICES] += phase_noise
+    n_points, n_channels = sig_values.shape
+    noise = np.random.normal(0.0, args.noise_std, size=(n_points, n_channels))
+    sig_values *= (1.0 + noise)
 
     df.loc[:, sig_columns] = sig_values
 
