@@ -7,4 +7,9 @@ venv/
 temp_chunks/
 *.parquet
 forward_7p_40_sig_weights/
+engine_weights/
 *.pt
+
+# результаты локальных smoke-прогонов
+topology_parallel_complete.*
+synthetic_well_log_40ch.csv

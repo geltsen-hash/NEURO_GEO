@@ -1,0 +1,9 @@
+empymod>=2.6
+numpy>=1.26
+pandas>=2.0
+pyarrow>=15.0
+scikit-learn>=1.4
+scipy>=1.11
+torch>=2.2
+tqdm>=4.66
+matplotlib>=3.0
