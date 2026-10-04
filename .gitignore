@@ -3,13 +3,36 @@ __pycache__/
 .venv/
 venv/
 
-# артефакты генерации и обучения
-temp_chunks/
+# Датасеты и CSV файлы (остаются локально)
+data/
+*.csv
 *.parquet
+*.7z
+*.zip
+
+# Артефакты генерации и обучения
+temp_chunks/
 forward_7p_40_sig_weights/
 engine_weights/
 *.pt
 
-# результаты локальных smoke-прогонов
+# Результаты локальных smoke-прогонов
 topology_parallel_complete.*
-synthetic_well_log_40ch.csv
+
+# Visual Studio и временные файлы компилятора C++
+.vs/
+cpp_engine/.vs/
+cpp_engine/Debug/
+cpp_engine/packages/
+cpp_engine/**/Debug/
+cpp_engine/**/x64/
+*.pdb
+*.ipdb
+*.iobj
+*.tlog
+*.obj
+*.exp
+*.log
+*.lastcodeanalysissucceeded
+*.tmp
+

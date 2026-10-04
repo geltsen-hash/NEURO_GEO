@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Форма ввода гармоник калибровки</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f4f6f8;
+      color: #1f2937;
+    }
+    header {
+      padding: 24px 32px;
+      background: #111827;
+      color: white;
+    }
+    main {
+      padding: 24px 32px 48px;
+      max-width: 980px;
+      margin: 0 auto;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+    }
+    h2 {
+      margin-top: 32px;
+      font-size: 20px;
+    }
+    .panel {
+      background: white;
+      border: 1px solid #d1d5db;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 18px;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 16px 0;
+    }
+    button, label.file-button {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      background: #2563eb;
+      color: white;
+    }
+    button.secondary, label.file-button.secondary {
+      background: #4b5563;
+    }
+    button.danger {
+      background: #dc2626;
+    }
+    input[type="file"] {
+      display: none;
+    }
+    table {
+      width: auto;
+      min-width: 0;
+      border-collapse: collapse;
+      background: white;
+      margin-top: 8px;
+    }
+    th, td {
+      border: 1px solid #d1d5db;
+      padding: 4px 6px;
+      text-align: center;
+      font-size: 12px;
+    }
+    th {
+      background: #e5e7eb;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    td.channel {
+      text-align: left;
+      white-space: nowrap;
+      background: #f9fafb;
+      font-weight: 600;
+    }
+    input[type="number"] {
+      width: 72px;
+      padding: 4px 5px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      text-align: right;
+    }
+    textarea {
+      width: 100%;
+      min-height: 180px;
+      box-sizing: border-box;
+      padding: 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-family: Consolas, monospace;
+      font-size: 13px;
+    }
+    .result-summary {
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      line-height: 1.5;
+    }
+    .hint {
+      color: #4b5563;
+      line-height: 1.45;
+    }
+    .height-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .height-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .status {
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #ecfdf5;
+      color: #065f46;
+      display: none;
+      margin-top: 10px;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 10px;
+      border: 1px solid #d1d5db;
+      display: inline-block;
+      max-width: 100%;
+    }
+    .result-table th,
+    .result-table td {
+      padding: 4px 8px;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Форма ввода гармоник калибровки</h1>
+    <div>Формат: 5 высот × 8 каналов × 3 гармоники: |H0|, |H1|, |H2| в мВ</div>
+  </header>
+  <main>
+    <section class="panel">
+      <div class="hint">
+        Заполните значения гармоник для каждой высоты и каждого канала. Затем можно запустить калибровку из формы, скачать CSV или скопировать Python-массив.
+      </div>
+      <div class="height-grid" id="heightInputs"></div>
+      <div class="actions">
+        <button onclick="downloadCsv()">Скачать CSV</button>
+        <label class="file-button secondary" for="csvFile">Загрузить CSV</label>
+        <input id="csvFile" type="file" accept=".csv,text/csv" onchange="loadCsvFile(event)">
+        <button onclick="runCalibration()">Запустить калибровку</button>
+        <button onclick="copyPythonArray()" class="secondary">Скопировать Python-массив</button>
+        <button onclick="clearForm()" class="danger">Очистить</button>
+      </div>
+      <div id="status" class="status"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Результат калибровки</h2>
+      <div id="calibrationResult"></div>
+    </section>
+
+    <section id="tables"></section>
+
+    <section class="panel">
+      <h2>Python-массив MEASURED_HARMONICS</h2>
+      <textarea id="pythonArray" readonly></textarea>
+    </section>
+  </main>
+
+  <script>
+    let heights = [0.5, 0.8, 1.2, 1.5, 1.85];
+    const channels = [
+      ['Tzz1', 'Rzx1'],
+      ['Tzz2', 'Rzx1'],
+      ['Tzz4', 'Rzx1'],
+      ['Tzz5', 'Rzx1'],
+      ['Tzz1', 'Rzx2'],
+      ['Tzz2', 'Rzx2'],
+      ['Tzz3', 'Rzx2'],
+      ['Tzz5', 'Rzx2'],
+    ];
+    const harmonicNames = ['H0', 'H1', 'H2'];
+
+    function displayName(name) {
+      if (name.startsWith('Tzz')) {
+        return `T${name.slice(3)}`;
+      }
+      if (name === 'Rzx1') {
+        return 'LEFT';
+      }
+      if (name === 'Rzx2') {
+        return 'RIGHT';
+      }
+      return name;
+    }
+
+    function fieldId(heightIndex, channelIndex, harmonicIndex) {
+      return `h${heightIndex}_c${channelIndex}_g${harmonicIndex}`;
+    }
+
+    function heightId(heightIndex) {
+      return `height_${heightIndex}`;
+    }
+
+    function buildHeightInputs() {
+      const root = document.getElementById('heightInputs');
+      root.innerHTML = heights.map((height, hi) => `
+        <label class="height-field">
+          Высота ${hi + 1}, м
+          <input type="number" step="0.01" min="0" id="${heightId(hi)}" value="${height}" onchange="updateHeight(${hi})">
+        </label>
+      `).join('');
+    }
+
+    function updateHeight(heightIndex) {
+      const value = Number(document.getElementById(heightId(heightIndex)).value);
+      if (!Number.isFinite(value) || value <= 0) {
+        showStatus('Высота должна быть положительным числом.');
+        document.getElementById(heightId(heightIndex)).value = heights[heightIndex];
+        return;
+      }
+      heights[heightIndex] = value;
+      buildTables();
+      showStatus('Высота обновлена.');
+    }
+
+    function buildTables() {
+      const root = document.getElementById('tables');
+      root.innerHTML = '';
+      heights.forEach((height, hi) => {
+        const section = document.createElement('section');
+        section.className = 'panel';
+        section.innerHTML = `<h2>Высота ${height} м</h2>`;
+        const wrap = document.createElement('div');
+        wrap.className = 'table-wrap';
+        const table = document.createElement('table');
+        table.innerHTML = `
+          <thead>
+            <tr>
+              <th>Tx</th>
+              <th>Rx</th>
+              <th>|H0|, мВ</th>
+              <th>|H1|, мВ</th>
+              <th>|H2|, мВ</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${channels.map(([tx, rx], ci) => `
+              <tr>
+                <td>${displayName(tx)}</td>
+                <td>${displayName(rx)}</td>
+                ${harmonicNames.map((_, gi) => `
+                  <td><input type="number" min="0" step="0.1" id="${fieldId(hi, ci, gi)}" oninput="updatePythonArray()"></td>
+                `).join('')}
+              </tr>
+            `).join('')}
+          </tbody>
+        `;
+        wrap.appendChild(table);
+        section.appendChild(wrap);
+        root.appendChild(section);
+      });
+      updatePythonArray();
+    }
+
+    function getValue(hi, ci, gi) {
+      const raw = document.getElementById(fieldId(hi, ci, gi)).value;
+      return raw === '' ? null : Number(raw);
+    }
+
+    function setValue(hi, ci, gi, value) {
+      document.getElementById(fieldId(hi, ci, gi)).value = value ?? '';
+    }
+
+    function collectData() {
+      return heights.map((height, hi) => ({
+        height,
+        channels: channels.map(([tx, rx], ci) => ({
+          channel: ci,
+          tx,
+          rx,
+          H0: getValue(hi, ci, 0),
+          H1: getValue(hi, ci, 1),
+          H2: getValue(hi, ci, 2),
+        }))
+      }));
+    }
+
+    function collectArray() {
+      return heights.map((_, hi) => channels.map((_, ci) => harmonicNames.map((_, gi) => getValue(hi, ci, gi) ?? 0)));
+    }
+
+    function validateForCalibration() {
+      for (let hi = 0; hi < heights.length; hi++) {
+        for (let ci = 0; ci < channels.length; ci++) {
+          for (let gi = 0; gi < harmonicNames.length; gi++) {
+            const value = getValue(hi, ci, gi);
+            if (value === null || !Number.isFinite(value) || value < 0) {
+              throw new Error(`Некорректное значение: высота ${hi + 1}, канал ${ci}, ${harmonicNames[gi]}`);
+            }
+          }
+        }
+      }
+    }
+
+    function toCsv() {
+      const rows = [['height', 'channel', 'tx', 'rx', 'H0', 'H1', 'H2']];
+      collectData().forEach(block => {
+        block.channels.forEach(row => {
+          rows.push([block.height, row.channel, row.tx, row.rx, row.H0 ?? '', row.H1 ?? '', row.H2 ?? '']);
+        });
+      });
+      return rows.map(row => row.join(',')).join('\n');
+    }
+
+    function toPythonArray() {
+      const array = collectArray();
+      const lines = [
+        `MEASURED_HEIGHTS = np.array([${heights.map(v => Number(v).toPrecision(12)).join(', ')}], dtype=np.float64)`,
+        '',
+        'MEASURED_HARMONICS = np.array(['
+      ];
+      array.forEach((heightBlock, hi) => {
+        lines.push(`    # height = ${heights[hi]} m`);
+        lines.push('    [');
+        heightBlock.forEach((channelBlock, ci) => {
+          const [tx, rx] = channels[ci];
+          lines.push(`        [${channelBlock.map(v => Number(v).toPrecision(12)).join(', ')}],  # ${ci}: ${tx} -> ${rx}`);
+        });
+        lines.push('    ],');
+      });
+      lines.push('], dtype=np.float64)');
+      return lines.join('\n');
+    }
+
+    function updatePythonArray() {
+      document.getElementById('pythonArray').value = toPythonArray();
+    }
+
+    function downloadText(filename, text, type) {
+      const blob = new Blob([text], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function downloadCsv() {
+      downloadText('calibration_measurements.csv', toCsv(), 'text/csv;charset=utf-8');
+      showStatus('CSV сохранён.');
+    }
+
+    function parseCsvLine(line) {
+      return line.split(',').map(value => value.trim());
+    }
+
+    function loadCsvFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const lines = reader.result.split(/\r?\n/).filter(line => line.trim() !== '');
+        const rows = lines.slice(1).map(parseCsvLine);
+        if (rows.length !== heights.length * channels.length) {
+          showStatus(`CSV должен содержать ${heights.length * channels.length} строк данных.`);
+          return;
+        }
+        rows.forEach((row, index) => {
+          const hi = Math.floor(index / channels.length);
+          const ci = index % channels.length;
+          heights[hi] = Number(row[0]);
+          setValue(hi, ci, 0, Number(row[4]));
+          setValue(hi, ci, 1, Number(row[5]));
+          setValue(hi, ci, 2, Number(row[6]));
+        });
+        buildHeightInputs();
+        updatePythonArray();
+        showStatus('CSV загружен.');
+      };
+      reader.readAsText(file);
+    }
+
+    async function copyPythonArray() {
+      await navigator.clipboard.writeText(toPythonArray());
+      showStatus('Python-массив скопирован в буфер обмена.');
+    }
+
+    async function runCalibration() {
+      try {
+        validateForCalibration();
+        const payload = {
+          heights,
+          harmonics: collectArray(),
+        };
+        const response = await fetch('http://127.0.0.1:8765/calibrate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json();
+        renderCalibrationResult(result);
+        if (!response.ok) {
+          showStatus('Сервер вернул ошибку.');
+          return;
+        }
+        showStatus('Калибровка выполнена.');
+      } catch (error) {
+        document.getElementById('calibrationResult').innerHTML = `<div class="result-summary">Ошибка: ${String(error)}</div>`;
+        showStatus('Ошибка запуска калибровки. Проверьте, что calibration_server.py запущен.');
+      }
+    }
+
+    function renderCalibrationResult(result) {
+      if (result.error) {
+        document.getElementById('calibrationResult').innerHTML = `<div class="result-summary">Ошибка: ${result.error}</div>`;
+        return;
+      }
+      document.getElementById('calibrationResult').innerHTML = `
+        <div class="result-summary">
+          <div><b>Норма невязки:</b> ${result.residual_norm.toExponential(6)}</div>
+          <div><b>Статус оптимизации:</b> ${result.success ? 'успех' : 'неуспех'}</div>
+          <div><b>Сообщение:</b> ${result.message}</div>
+        </div>
+        <h3>Оцененные углы элементов</h3>
+        ${resultTable(result.tilts)}
+      `;
+    }
+
+    function resultTable(values) {
+      return `
+        <div class="table-wrap">
+          <table class="result-table">
+            <thead>
+              <tr>
+                <th>Параметр</th>
+                <th>Угол, град</th>
+                <th>mx/mz</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${Object.entries(values).map(([name, value]) => `
+                <tr>
+                  <td>${displayName(name)}</td>
+                  <td>${value.angle_deg.toFixed(6)}</td>
+                  <td>${value.mx_over_mz.toExponential(6)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function clearForm() {
+      if (!confirm('Очистить все поля?')) return;
+      heights.forEach((_, hi) => channels.forEach((_, ci) => harmonicNames.forEach((_, gi) => setValue(hi, ci, gi, ''))));
+      updatePythonArray();
+      showStatus('Форма очищена.');
+    }
+
+    function showStatus(text) {
+      const status = document.getElementById('status');
+      status.textContent = text;
+      status.style.display = 'block';
+      setTimeout(() => { status.style.display = 'none'; }, 3000);
+    }
+
+    buildHeightInputs();
+    buildTables();
+  </script>
+</body>
+</html>
