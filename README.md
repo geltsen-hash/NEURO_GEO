@@ -8,9 +8,12 @@ dataset/GEO_40sig_7p_dataset_gen.py     генерация датасета (LHS
 train/pipeline_common.py                общие препроцессинг, сплит, скейлеры, экспорт весов
 train/forvard_neuro_train_7p_40sig.py   прямая сеть 7->40 (экспорт FWD_* и скейлеров)
 train/PINN_train_40sig_7p.py            обратная сеть 40->7 с физической невязкой (экспорт INV_*)
-dll/NEURO_40_7.cpp                      инференс инверсии (PGD по входу прямой сети) для Visual Studio
+cpp_engine/                             проект C++ DLL инверсии для ПК / Visual Studio
+NEURO_GEO_H750/                         проект бортового микроконтроллера STM32H750 (ARM Cortex-M7)
+calibration/                            калибровка и отчеты прибора «Картограф»
+test/                                   синтетический каротаж и кросс-валидация DLL vs PINN
 tools/verify_mirror_symmetry.py         проверка симметрии, на которой построена аугментация
-docs/                                   разбор исходных версий скриптов и обоснование правок
+docs/                                   методология, ТЗ T0, отчеты о запуске STM32
 ```
 
 ## Модель и данные

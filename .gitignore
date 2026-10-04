@@ -36,3 +36,15 @@ cpp_engine/**/x64/
 *.lastcodeanalysissucceeded
 *.tmp
 
+# STM32 сборка
+build/
+NEURO_GEO_H750/build/
+*.elf
+*.hex
+*.bin
+*.map
+*.o
+*.d
+*.lst
+
+
