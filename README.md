@@ -10,7 +10,6 @@ train/forvard_neuro_train_7p_40sig.py   прямая сеть 7->40 (экспо�
 train/PINN_train_40sig_7p.py            обратная сеть 40->7 с физической невязкой (экспорт INV_*)
 cpp_engine/                             проект C++ DLL инверсии для ПК / Visual Studio
 NEURO_GEO_H750/                         проект бортового микроконтроллера STM32H750 (ARM Cortex-M7)
-calibration/                            калибровка и отчеты прибора «Картограф»
 test/                                   синтетический каротаж и кросс-валидация DLL vs PINN
 tools/verify_mirror_symmetry.py         проверка симметрии, на которой построена аугментация
 docs/                                   методология, ТЗ T0, отчеты о запуске STM32

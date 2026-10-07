@@ -1,12 +1,13 @@
 #include "usbd_cdc_if.h"
 #include "main.h"
+#include "fatfs.h"
 #include <string.h>
 
 #define APP_RX_DATA_SIZE  2048
 #define APP_TX_DATA_SIZE  2048
 
-uint8_t UserRxBufferFS[APP_RX_DATA_SIZE];
-uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];
+uint8_t UserRxBufferFS[APP_RX_DATA_SIZE] __attribute__((aligned(32)));
+uint8_t UserTxBufferFS[APP_TX_DATA_SIZE] __attribute__((aligned(32)));
 
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
@@ -63,16 +64,61 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
   return (USBD_OK);
 }
 
+char g_cmd_buf[64] = {0};
+volatile uint8_t g_cmd_ready = 0;
+
+PointReqPacket g_proto_req;
+volatile uint8_t g_proto_ready = 0;
+
+static uint8_t  s_bin_buf[sizeof(PointReqPacket)];
+static uint16_t s_bin_idx = 0;
+static uint8_t  s_bin_active = 0;
+static uint8_t  s_ascii_idx = 0;
+
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
-  SCB_CleanDCache_by_Addr((uint32_t *)Buf, *Len);
+  for (uint32_t i = 0; i < *Len; ++i) {
+    uint8_t b = Buf[i];
 
-  if (*Len >= 4 && (Buf[0] == 'p' || Buf[0] == 'P') && (Buf[1] == 'i' || Buf[1] == 'I') && (Buf[2] == 'n' || Buf[2] == 'N') && (Buf[3] == 'g' || Buf[3] == 'G')) {
-    const char msg[] = "\r\n[STM32H750] PONG! Core 480 MHz, USB CDC Ready.\r\n";
-    CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
-  } else {
-    // Echo back
-    CDC_Transmit_FS(Buf, *Len);
+    if (!s_bin_active) {
+      if (b == PROTO_REQ_SYNC0) {
+        s_bin_buf[0] = b;
+        s_bin_idx = 1;
+      } else if (s_bin_idx == 1 && b == PROTO_REQ_SYNC1) {
+        s_bin_buf[1] = b;
+        s_bin_idx = 2;
+        s_bin_active = 1;
+      } else {
+        if (s_bin_idx == 1) {
+          if (s_ascii_idx < sizeof(g_cmd_buf) - 1) {
+            g_cmd_buf[s_ascii_idx++] = (char)PROTO_REQ_SYNC0;
+          }
+          s_bin_idx = 0;
+        }
+        char c = (char)b;
+        if (c == '\r' || c == '\n') {
+          if (s_ascii_idx > 0) {
+            g_cmd_buf[s_ascii_idx] = '\0';
+            g_cmd_ready = 1;
+            s_ascii_idx = 0;
+          }
+        } else if (c == '\b' || c == 0x7F) {
+          if (s_ascii_idx > 0) {
+            s_ascii_idx--;
+          }
+        } else if (c >= 32 && s_ascii_idx < sizeof(g_cmd_buf) - 1) {
+          g_cmd_buf[s_ascii_idx++] = c;
+        }
+      }
+    } else {
+      s_bin_buf[s_bin_idx++] = b;
+      if (s_bin_idx >= sizeof(PointReqPacket)) {
+        memcpy(&g_proto_req, s_bin_buf, sizeof(PointReqPacket));
+        g_proto_ready = 1;
+        s_bin_active = 0;
+        s_bin_idx = 0;
+      }
+    }
   }
 
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
@@ -87,9 +133,30 @@ uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len)
   if (hcdc == NULL || hcdc->TxState != 0){
     return USBD_BUSY;
   }
+  SCB_CleanDCache_by_Addr((uint32_t *)Buf, (Len + 31) & ~31);
   USBD_CDC_SetTxBuffer(&hUsbDeviceFS, Buf, Len);
   result = USBD_CDC_TransmitPacket(&hUsbDeviceFS);
   return result;
+}
+
+void CDC_SendResponse(const char *msg)
+{
+  if (!msg) return;
+  uint16_t len = (uint16_t)strlen(msg);
+  uint32_t t0 = HAL_GetTick();
+  while (CDC_Transmit_FS((uint8_t*)msg, len) == USBD_BUSY) {
+    if (HAL_GetTick() - t0 > 1000) break;
+  }
+}
+
+uint8_t CDC_SendBinary(const uint8_t *data, uint16_t len)
+{
+  if (!data || len == 0) return USBD_OK;
+  uint32_t t0 = HAL_GetTick();
+  while (CDC_Transmit_FS((uint8_t*)data, len) == USBD_BUSY) {
+    if (HAL_GetTick() - t0 > 2000) return USBD_BUSY;
+  }
+  return USBD_OK;
 }
 
 static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
