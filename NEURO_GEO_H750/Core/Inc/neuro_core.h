@@ -20,6 +20,11 @@ extern "C" {
 
 #define QSPI_BASE_ADDR 0x90000000U
 
+/* Optimization steps per topology */
+#define ADAM_STEPS_M0 25
+#define ADAM_STEPS_M1 40
+#define ADAM_STEPS_M2 40
+
 /* Scaler vectors */
 extern float g_mean_X[7];
 extern float g_scale_X[7];
@@ -27,6 +32,8 @@ extern float g_mean_Y[40];
 extern float g_scale_Y[40];
 extern bool g_neuro_ready;
 extern bool g_is_fp16;
+extern bool g_qspi_dtr;
+extern uint32_t g_dtr_test_magic;
 
 /* Core lifecycle */
 uint8_t Neuro_Init(void);

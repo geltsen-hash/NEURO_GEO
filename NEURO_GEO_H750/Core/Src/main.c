@@ -11,6 +11,7 @@
 #include "fatfs.h"
 #include "neuro_core.h"
 #include "neuro_protocol.h"
+#include "w25qxx_qspi.h"
 #include <string.h>
 #include <strings.h>
 #include <stdio.h>
@@ -125,8 +126,12 @@ int main(void)
       else if (strcasecmp(g_cmd_buf, "init") == 0)
       {
         if (Neuro_Init() == NEURO_OK) {
-          snprintf(resp, sizeof(resp), "[NEURO] Init OK! Scalers loaded, QSPI FWD (%s) mapped (0x%08X).\r\n",
-                   g_is_fp16 ? "FP16" : "FP32", QSPI_BASE_ADDR);
+          snprintf(resp, sizeof(resp), "[NEURO] Init OK! Scalers loaded, QSPI FWD (%s, %s, ID=0x%04X, DTR_probe=0x%08lX) mapped (0x%08X).\r\n",
+                   g_is_fp16 ? "FP16" : "FP32",
+                   g_qspi_dtr ? "DTR 120MB/s" : "SDR 60MB/s",
+                   w25qxx_ID,
+                   (unsigned long)g_dtr_test_magic,
+                   QSPI_BASE_ADDR);
         } else {
           snprintf(resp, sizeof(resp), "[NEURO] Init FAILED! Check SD card files.\r\n");
         }

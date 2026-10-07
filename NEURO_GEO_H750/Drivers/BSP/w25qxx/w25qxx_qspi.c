@@ -125,6 +125,14 @@ uint8_t w25qxx_EnterQPI(void)
   * @brief  Initializes and configure the QSPI interface.
   * @retval QSPI memory status
   */
+static uint8_t s_dtr_dummy = 6;
+
+uint8_t w25qxx_StartupDTR(uint8_t dummy_cycles)
+{
+  s_dtr_dummy = dummy_cycles;
+  return w25qxx_Startup(w25qxx_DTRMode);
+}
+
 uint8_t w25qxx_Startup(uint8_t DTRMode)
 {
   /* Enable MemoryMapped mode */
@@ -414,12 +422,14 @@ static uint32_t QSPI_EnableMemoryMappedMode(QSPI_HandleTypeDef *hqspi,uint8_t DT
 	
 	if(DTRMode == w25qxx_DTRMode)
 	{
+		CLEAR_BIT(hqspi->Instance->CR, QUADSPI_CR_SSHIFT);
 		s_command.Instruction     = W25X_QUAD_INOUT_FAST_READ_DTR_CMD; 
-		s_command.DummyCycles     = W25X_DUMMY_CYCLES_READ_QUAD_DTR;
+		s_command.DummyCycles     = s_dtr_dummy;
 		s_command.DdrMode         = QSPI_DDR_MODE_ENABLE;
 	}
 	else
 	{
+		SET_BIT(hqspi->Instance->CR, QUADSPI_CR_SSHIFT);
 		s_command.Instruction     = W25X_QUAD_INOUT_FAST_READ_CMD;
 		
 		if(w25qxx_Mode == w25qxx_QPIMode)

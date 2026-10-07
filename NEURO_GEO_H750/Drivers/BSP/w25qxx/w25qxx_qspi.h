@@ -81,6 +81,7 @@ uint8_t w25qxx_WriteSR(uint8_t SR,uint8_t data);
 uint8_t w25qxx_SetReadParameters(uint8_t DummyClock,uint8_t WrapLenth);
 uint8_t w25qxx_EnterQPI(void);
 uint8_t w25qxx_Startup(uint8_t DTRMode);
+uint8_t w25qxx_StartupDTR(uint8_t dummy_cycles);
 uint8_t W25qxx_WriteEnable(void);
 uint8_t W25qxx_EraseSector(uint32_t SectorAddress);
 uint8_t W25qxx_EraseBlock(uint32_t BlockAddress);

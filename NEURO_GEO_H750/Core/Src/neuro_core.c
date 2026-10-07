@@ -17,6 +17,8 @@ float g_mean_Y[40];
 float g_scale_Y[40];
 bool g_neuro_ready = false;
 bool g_is_fp16 = false;
+bool g_qspi_dtr = false;
+uint32_t g_dtr_test_magic = 0;
 
 static const float  *FWD_W32[5];
 static const __fp16 *FWD_W16[5];
@@ -520,6 +522,7 @@ static void pgd_core(const float *y_true_scaled,
                      const float *min_scaled,
                      const float *max_scaled,
                      int topology_mode,
+                     int steps,
                      const float *m1_transformed,
                      const float *opt_geo_init,
                      float *out_transformed)
@@ -569,8 +572,8 @@ static void pgd_core(const float *y_true_scaled,
   float m[7] = {0}, v[7] = {0};
   const float beta1 = 0.9f, beta2 = 0.999f, epsilon = 1e-8f, lr = 0.015f;
 
-  for (int step = 1; step <= 150; ++step) {
-    if (step % 25 == 0) {
+  for (int step = 1; step <= steps; ++step) {
+    if (step % 25 == 0 || step == steps) {
       HAL_GPIO_TogglePin(PE3_GPIO_Port, PE3_Pin);
     }
     Neuro_PredictForward(opt_geo, y_pred);
@@ -681,12 +684,12 @@ void Neuro_RunTopologyInversion(const float *raw_signals_40,
   Neuro_PredictInverseFromSD(y_true, opt_geo_init);
 
   float res0[7], res1[7], res2[7];
-  if (verbose) CDC_SendResponse("  [INVERT] Running Model 0 (0 boundaries)...\r\n");
-  pgd_core(y_true, min_scaled, max_scaled, 0, NULL, opt_geo_init, res0);
-  if (verbose) CDC_SendResponse("  [INVERT] Running Model 1 (1 boundary)...\r\n");
-  pgd_core(y_true, min_scaled, max_scaled, 1, NULL, opt_geo_init, res1);
-  if (verbose) CDC_SendResponse("  [INVERT] Running Model 2 (2 boundaries)...\r\n");
-  pgd_core(y_true, min_scaled, max_scaled, 2, res1, opt_geo_init, res2);
+  if (verbose) CDC_SendResponse("  [INVERT] Running Model 0 (0 boundaries, 25 steps)...\r\n");
+  pgd_core(y_true, min_scaled, max_scaled, 0, ADAM_STEPS_M0, NULL, opt_geo_init, res0);
+  if (verbose) CDC_SendResponse("  [INVERT] Running Model 1 (1 boundary, 40 steps)...\r\n");
+  pgd_core(y_true, min_scaled, max_scaled, 1, ADAM_STEPS_M1, NULL, opt_geo_init, res1);
+  if (verbose) CDC_SendResponse("  [INVERT] Running Model 2 (2 boundaries, 40 steps)...\r\n");
+  pgd_core(y_true, min_scaled, max_scaled, 2, ADAM_STEPS_M2, res1, opt_geo_init, res2);
 
   out14[0]  = powf(10.0f, res0[1]);
   out14[1]  = powf(10.0f, res0[2]);
@@ -723,10 +726,34 @@ uint8_t Neuro_Init(void)
 
   /* 2. Check if QSPI is in memory mapped mode and has FWD magic */
   w25qxx_Init();
-  w25qxx_Startup(w25qxx_NormalMode);
-  SCB_CleanInvalidateDCache();
 
-  uint32_t magic = *(volatile uint32_t *)QSPI_BASE_ADDR;
+  /* Try DTR Mode with candidate dummy cycle values (6, 8, 4) */
+  uint32_t magic = 0;
+  g_qspi_dtr = false;
+  static const uint8_t dtr_candidates[] = {6, 8, 4};
+  for (int i = 0; i < 3; ++i) {
+    w25qxx_Init();
+    uint8_t dtr_res = w25qxx_StartupDTR(dtr_candidates[i]);
+    SCB_CleanInvalidateDCache();
+    magic = *(volatile uint32_t *)QSPI_BASE_ADDR;
+    g_dtr_test_magic = magic;
+    if (dtr_res == w25qxx_OK && (magic == FWD16_MAGIC || magic == FWD_MAGIC)) {
+      const uint32_t *hdr = (const uint32_t *)QSPI_BASE_ADDR;
+      if (hdr[1] == 5 && hdr[2] == 7 && hdr[3] == 512 && hdr[4] == 1024) {
+        g_qspi_dtr = true;
+        break;
+      }
+    }
+  }
+
+  if (!g_qspi_dtr) {
+    /* Fallback to reliable Normal Mode (SDR, 60 MB/s) */
+    w25qxx_Init();
+    w25qxx_Startup(w25qxx_NormalMode);
+    SCB_CleanInvalidateDCache();
+    magic = *(volatile uint32_t *)QSPI_BASE_ADDR;
+  }
+
   if (magic != FWD16_MAGIC && magic != FWD_MAGIC) {
     /* Need to burn FWD to QSPI */
     if (Neuro_BurnFwdToQspi() != NEURO_OK) {
@@ -813,7 +840,11 @@ uint8_t Neuro_BurnFwdToQspi(void)
   f_close(&f);
 
   /* Switch back to Memory-Mapped Mode */
-  w25qxx_Startup(w25qxx_NormalMode);
+  if (g_qspi_dtr) {
+    w25qxx_Startup(w25qxx_DTRMode);
+  } else {
+    w25qxx_Startup(w25qxx_NormalMode);
+  }
   SCB_CleanInvalidateDCache();
   return NEURO_OK;
 }
