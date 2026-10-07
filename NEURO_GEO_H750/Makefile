@@ -55,6 +55,8 @@ Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_sd.c \
 Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_sd_ex.c \
 Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_sdmmc.c \
 Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_delayblock.c \
+Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_adc.c \
+Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_adc_ex.c \
 Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_usb.c
 
 ASM_SOURCES = \

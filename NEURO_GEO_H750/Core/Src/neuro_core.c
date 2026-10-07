@@ -571,6 +571,8 @@ static void pgd_core(const float *y_true_scaled,
   float grad_x[7];
   float m[7] = {0}, v[7] = {0};
   const float beta1 = 0.9f, beta2 = 0.999f, epsilon = 1e-8f, lr = 0.015f;
+  const int min_steps = (topology_mode == 0) ? ADAM_MIN_STEPS_M0 : ADAM_MIN_STEPS_M1;
+  int patience = 0;
 
   for (int step = 1; step <= steps; ++step) {
     if (step % 25 == 0 || step == steps) {
@@ -591,6 +593,20 @@ static void pgd_core(const float *y_true_scaled,
         grad_x[5] = 0.0f;
         grad_x[3] = 0.0f;
       }
+    }
+
+    /* Early Stopping check based on gradient norm ||∇x|| */
+    float gnorm_sq = 0.0f;
+    for (int i = 0; i < 7; ++i) {
+      gnorm_sq += grad_x[i] * grad_x[i];
+    }
+    if (step >= min_steps && gnorm_sq < ADAM_GRAD_NORM_SQ_EPS) {
+      patience++;
+      if (patience >= ADAM_EARLY_STOP_PATIENCE) {
+        break;
+      }
+    } else {
+      patience = 0;
     }
 
     float p1 = 1.0f - powf(beta1, (float)step);
@@ -684,12 +700,12 @@ void Neuro_RunTopologyInversion(const float *raw_signals_40,
   Neuro_PredictInverseFromSD(y_true, opt_geo_init);
 
   float res0[7], res1[7], res2[7];
-  if (verbose) CDC_SendResponse("  [INVERT] Running Model 0 (0 boundaries, 25 steps)...\r\n");
-  pgd_core(y_true, min_scaled, max_scaled, 0, ADAM_STEPS_M0, NULL, opt_geo_init, res0);
-  if (verbose) CDC_SendResponse("  [INVERT] Running Model 1 (1 boundary, 40 steps)...\r\n");
-  pgd_core(y_true, min_scaled, max_scaled, 1, ADAM_STEPS_M1, NULL, opt_geo_init, res1);
-  if (verbose) CDC_SendResponse("  [INVERT] Running Model 2 (2 boundaries, 40 steps)...\r\n");
-  pgd_core(y_true, min_scaled, max_scaled, 2, ADAM_STEPS_M2, res1, opt_geo_init, res2);
+  if (verbose) CDC_SendResponse("  [INVERT] Running Model 0 (0 boundaries)...\r\n");
+  pgd_core(y_true, min_scaled, max_scaled, 0, ADAM_MAX_STEPS_M0, NULL, opt_geo_init, res0);
+  if (verbose) CDC_SendResponse("  [INVERT] Running Model 1 (1 boundary)...\r\n");
+  pgd_core(y_true, min_scaled, max_scaled, 1, ADAM_MAX_STEPS_M1, NULL, opt_geo_init, res1);
+  if (verbose) CDC_SendResponse("  [INVERT] Running Model 2 (2 boundaries)...\r\n");
+  pgd_core(y_true, min_scaled, max_scaled, 2, ADAM_MAX_STEPS_M2, res1, opt_geo_init, res2);
 
   out14[0]  = powf(10.0f, res0[1]);
   out14[1]  = powf(10.0f, res0[2]);

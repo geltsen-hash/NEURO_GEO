@@ -17,6 +17,7 @@
 #include <stdio.h>
 
 void SystemClock_Config(void);
+float MCU_GetTemperature(void);
 
 static void MPU_Config(void)
 {
@@ -117,7 +118,16 @@ int main(void)
 
       if (strcasecmp(g_cmd_buf, "ping") == 0)
       {
-        snprintf(resp, sizeof(resp), "[STM32H750] PONG! Core 480 MHz, USB CDC Ready.\r\n");
+        float cur_temp = MCU_GetTemperature();
+        snprintf(resp, sizeof(resp), "[STM32H750] PONG! Core 480 MHz, Temp: %.1f C, USB CDC Ready.\r\n", cur_temp);
+      }
+      else if (strcasecmp(g_cmd_buf, "temp") == 0)
+      {
+        float cur_temp = MCU_GetTemperature();
+        snprintf(resp, sizeof(resp), "[TEMP] STM32H750 Junction Temperature: %.1f C (Raw ADC3 Ch18: %lu, CAL1: %u, CAL2: %u)\r\n",
+                 cur_temp, (unsigned long)ADC3->DR,
+                 (unsigned int)*((uint16_t *)0x1FF1E820UL),
+                 (unsigned int)*((uint16_t *)0x1FF1E840UL));
       }
       else if (strcasecmp(g_cmd_buf, "sd") == 0)
       {
@@ -238,6 +248,72 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/* User temperature sensor function using standard HAL ADC3 */
+static ADC_HandleTypeDef g_hadc3;
+
+float MCU_GetTemperature(void)
+{
+  static bool adc_inited = false;
+  if (!adc_inited)
+  {
+    /* 1. Select ADC clock source: PLL2 or per_ck / HCLK */
+    RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
+    PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
+    PeriphClkInit.AdcClockSelection = RCC_ADCCLKSOURCE_CLKP; /* HSE 25MHz per_ck */
+    HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit);
+
+    __HAL_RCC_ADC3_CLK_ENABLE();
+
+    /* 2. Init ADC3 */
+    g_hadc3.Instance = ADC3;
+    g_hadc3.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV2;
+    g_hadc3.Init.Resolution = ADC_RESOLUTION_16B;
+    g_hadc3.Init.ScanConvMode = ADC_SCAN_DISABLE;
+    g_hadc3.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+    g_hadc3.Init.LowPowerAutoWait = DISABLE;
+    g_hadc3.Init.ContinuousConvMode = DISABLE;
+    g_hadc3.Init.NbrOfConversion = 1;
+    g_hadc3.Init.DiscontinuousConvMode = DISABLE;
+    g_hadc3.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+    g_hadc3.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+    g_hadc3.Init.ConversionDataManagement = ADC_CONVERSIONDATA_DR;
+    g_hadc3.Init.Overrun = ADC_OVR_DATA_OVERWRITTEN;
+    g_hadc3.Init.OversamplingMode = DISABLE;
+    HAL_ADC_Init(&g_hadc3);
+
+    /* 3. Run calibration */
+    HAL_ADCEx_Calibration_Start(&g_hadc3, ADC_CALIB_OFFSET_LINEARITY, ADC_SINGLE_ENDED);
+
+    /* 4. Configure Channel TEMPSENSOR */
+    ADC_ChannelConfTypeDef sConfig = {0};
+    sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+    sConfig.Rank = ADC_REGULAR_RANK_1;
+    sConfig.SamplingTime = ADC_SAMPLETIME_810CYCLES_5;
+    sConfig.SingleDiff = ADC_SINGLE_ENDED;
+    sConfig.OffsetNumber = ADC_OFFSET_NONE;
+    HAL_ADC_ConfigChannel(&g_hadc3, &sConfig);
+
+    adc_inited = true;
+  }
+
+  HAL_ADC_Start(&g_hadc3);
+  if (HAL_ADC_PollForConversion(&g_hadc3, 20) == HAL_OK)
+  {
+    uint32_t raw_adc = HAL_ADC_GetValue(&g_hadc3);
+    uint16_t ts_cal1 = *((uint16_t *)0x1FF1E820UL); /* 30 °C at 3.3V */
+    uint16_t ts_cal2 = *((uint16_t *)0x1FF1E840UL); /* 110 °C at 3.3V */
+
+    if (ts_cal2 > ts_cal1)
+    {
+      float temp_c = ((float)((int32_t)raw_adc - (int32_t)ts_cal1) * (110.0f - 30.0f) / 
+                      (float)((int32_t)ts_cal2 - (int32_t)ts_cal1)) + 30.0f;
+      return temp_c;
+    }
+  }
+
+  return 0.0f;
 }
 
 void Error_Handler(void)

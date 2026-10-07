@@ -20,10 +20,17 @@ extern "C" {
 
 #define QSPI_BASE_ADDR 0x90000000U
 
-/* Optimization steps per topology */
-#define ADAM_STEPS_M0 25
-#define ADAM_STEPS_M1 40
-#define ADAM_STEPS_M2 40
+/* Optimization steps per topology with Early Stopping */
+#define ADAM_MAX_STEPS_M0         25
+#define ADAM_MAX_STEPS_M1         40
+#define ADAM_MAX_STEPS_M2         40
+
+#define ADAM_MIN_STEPS_M0         10
+#define ADAM_MIN_STEPS_M1         20
+#define ADAM_MIN_STEPS_M2         20
+
+#define ADAM_EARLY_STOP_PATIENCE  2
+#define ADAM_GRAD_NORM_SQ_EPS     0.0001f  /* ||∇x|| < 0.010 -> ||∇x||^2 < 1e-4 */
 
 /* Scaler vectors */
 extern float g_mean_X[7];
