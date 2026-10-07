@@ -79,7 +79,7 @@ C_INCLUDES = \
 -IMiddlewares/Third_Party/FatFs/src \
 -IDrivers/BSP/w25qxx
 
-CFLAGS = $(MCU) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections
+CFLAGS = $(MCU) -mfp16-format=ieee $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections
 
 ifeq ($(DEBUG), 1)
 CFLAGS += -g -gdwarf-2

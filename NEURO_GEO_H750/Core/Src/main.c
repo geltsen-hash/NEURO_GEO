@@ -125,14 +125,15 @@ int main(void)
       else if (strcasecmp(g_cmd_buf, "init") == 0)
       {
         if (Neuro_Init() == NEURO_OK) {
-          snprintf(resp, sizeof(resp), "[NEURO] Init OK! Scalers loaded, QSPI FWD mapped (0x%08X).\r\n", QSPI_BASE_ADDR);
+          snprintf(resp, sizeof(resp), "[NEURO] Init OK! Scalers loaded, QSPI FWD (%s) mapped (0x%08X).\r\n",
+                   g_is_fp16 ? "FP16" : "FP32", QSPI_BASE_ADDR);
         } else {
           snprintf(resp, sizeof(resp), "[NEURO] Init FAILED! Check SD card files.\r\n");
         }
       }
       else if (strcasecmp(g_cmd_buf, "flash_qspi") == 0)
       {
-        snprintf(resp, sizeof(resp), "[NEURO] Burning FWD_FP32.BIN to QSPI Flash (4.8 MB)... please wait...\r\n");
+        snprintf(resp, sizeof(resp), "[NEURO] Burning FWD weights to QSPI Flash... please wait...\r\n");
         CDC_SendResponse(resp);
         HAL_Delay(100);
         uint32_t t0 = HAL_GetTick();

@@ -16,9 +16,11 @@ float g_scale_X[7];
 float g_mean_Y[40];
 float g_scale_Y[40];
 bool g_neuro_ready = false;
+bool g_is_fp16 = false;
 
-static const float *FWD_W[5];
-static const float *FWD_b[5];
+static const float  *FWD_W32[5];
+static const __fp16 *FWD_W16[5];
+static const float  *FWD_b[5];
 
 /* Fast high-precision polynomial GELU & derivative (Abramowitz & Stegun 7.1.26, max error < 6e-7) */
 static inline float gelu(float x) {
@@ -53,14 +55,27 @@ static inline float gelu_deriv(float x) {
 }
 
 static void init_fwd_pointers(const uint8_t *base) {
-  const float *p = (const float *)(base + 64);
+  uint32_t magic = *(const uint32_t *)base;
+  const uint8_t *p = base + 64;
   int in_dim[5] = {7, 512, 1024, 512, 256};
   int out_dim[5] = {512, 1024, 512, 256, 40};
-  for (int i = 0; i < 5; ++i) {
-    FWD_W[i] = p;
-    p += in_dim[i] * out_dim[i];
-    FWD_b[i] = p;
-    p += out_dim[i];
+
+  if (magic == FWD16_MAGIC) {
+    g_is_fp16 = true;
+    for (int i = 0; i < 5; ++i) {
+      FWD_W16[i] = (const __fp16 *)p;
+      p += in_dim[i] * out_dim[i] * sizeof(__fp16);
+      FWD_b[i] = (const float *)p;
+      p += out_dim[i] * sizeof(float);
+    }
+  } else {
+    g_is_fp16 = false;
+    for (int i = 0; i < 5; ++i) {
+      FWD_W32[i] = (const float *)p;
+      p += in_dim[i] * out_dim[i] * sizeof(float);
+      FWD_b[i] = (const float *)p;
+      p += out_dim[i] * sizeof(float);
+    }
   }
 }
 
@@ -77,7 +92,7 @@ static FwdState s_fwd;
 static float s_da[1024];
 static float s_dz[1024];
 
-void Neuro_PredictForward(const float *x, float *out_y)
+static void forward_fp32(const float *x, float *out_y)
 {
   FwdState *s = &s_fwd;
 
@@ -85,7 +100,7 @@ void Neuro_PredictForward(const float *x, float *out_y)
   memcpy(s->z0, FWD_b[0], 512 * sizeof(float));
   for (int k = 0; k < 7; ++k) {
     float x_k = x[k];
-    const float *w_row = &FWD_W[0][k * 512];
+    const float *w_row = &FWD_W32[0][k * 512];
     for (int j = 0; j < 512; ++j) {
       s->z0[j] += x_k * w_row[j];
     }
@@ -98,7 +113,7 @@ void Neuro_PredictForward(const float *x, float *out_y)
   memcpy(s->z1, FWD_b[1], 1024 * sizeof(float));
   for (int k = 0; k < 512; ++k) {
     float a_k = s->a0[k];
-    const float *w_row = &FWD_W[1][k * 1024];
+    const float *w_row = &FWD_W32[1][k * 1024];
     for (int j = 0; j < 1024; ++j) {
       s->z1[j] += a_k * w_row[j];
     }
@@ -111,7 +126,7 @@ void Neuro_PredictForward(const float *x, float *out_y)
   memcpy(s->z2, FWD_b[2], 512 * sizeof(float));
   for (int k = 0; k < 1024; ++k) {
     float a_k = s->a1[k];
-    const float *w_row = &FWD_W[2][k * 512];
+    const float *w_row = &FWD_W32[2][k * 512];
     for (int j = 0; j < 512; ++j) {
       s->z2[j] += a_k * w_row[j];
     }
@@ -124,7 +139,7 @@ void Neuro_PredictForward(const float *x, float *out_y)
   memcpy(s->z3, FWD_b[3], 256 * sizeof(float));
   for (int k = 0; k < 512; ++k) {
     float a_k = s->a2[k];
-    const float *w_row = &FWD_W[3][k * 256];
+    const float *w_row = &FWD_W32[3][k * 256];
     for (int j = 0; j < 256; ++j) {
       s->z3[j] += a_k * w_row[j];
     }
@@ -137,7 +152,7 @@ void Neuro_PredictForward(const float *x, float *out_y)
   memcpy(s->z4, FWD_b[4], 40 * sizeof(float));
   for (int k = 0; k < 256; ++k) {
     float a_k = s->a3[k];
-    const float *w_row = &FWD_W[4][k * 40];
+    const float *w_row = &FWD_W32[4][k * 40];
     for (int j = 0; j < 40; ++j) {
       s->z4[j] += a_k * w_row[j];
     }
@@ -145,7 +160,84 @@ void Neuro_PredictForward(const float *x, float *out_y)
   memcpy(out_y, s->z4, 40 * sizeof(float));
 }
 
-static void forward_net_backward(const float *y_pred, const float *y_true, float *grad_x)
+static void forward_fp16(const float *x, float *out_y)
+{
+  FwdState *s = &s_fwd;
+
+  /* Layer 0: 7 -> 512 (contiguous linear streaming, HW vcvtb) */
+  memcpy(s->z0, FWD_b[0], 512 * sizeof(float));
+  for (int k = 0; k < 7; ++k) {
+    float x_k = x[k];
+    const __fp16 *w_row = &FWD_W16[0][k * 512];
+    for (int j = 0; j < 512; ++j) {
+      s->z0[j] += x_k * (float)w_row[j];
+    }
+  }
+  for (int j = 0; j < 512; ++j) {
+    s->a0[j] = gelu(s->z0[j]);
+  }
+
+  /* Layer 1: 512 -> 1024 (contiguous linear streaming, HW vcvtb) */
+  memcpy(s->z1, FWD_b[1], 1024 * sizeof(float));
+  for (int k = 0; k < 512; ++k) {
+    float a_k = s->a0[k];
+    const __fp16 *w_row = &FWD_W16[1][k * 1024];
+    for (int j = 0; j < 1024; ++j) {
+      s->z1[j] += a_k * (float)w_row[j];
+    }
+  }
+  for (int j = 0; j < 1024; ++j) {
+    s->a1[j] = gelu(s->z1[j]);
+  }
+
+  /* Layer 2: 1024 -> 512 (contiguous linear streaming, HW vcvtb) */
+  memcpy(s->z2, FWD_b[2], 512 * sizeof(float));
+  for (int k = 0; k < 1024; ++k) {
+    float a_k = s->a1[k];
+    const __fp16 *w_row = &FWD_W16[2][k * 512];
+    for (int j = 0; j < 512; ++j) {
+      s->z2[j] += a_k * (float)w_row[j];
+    }
+  }
+  for (int j = 0; j < 512; ++j) {
+    s->a2[j] = gelu(s->z2[j]);
+  }
+
+  /* Layer 3: 512 -> 256 (contiguous linear streaming, HW vcvtb) */
+  memcpy(s->z3, FWD_b[3], 256 * sizeof(float));
+  for (int k = 0; k < 512; ++k) {
+    float a_k = s->a2[k];
+    const __fp16 *w_row = &FWD_W16[3][k * 256];
+    for (int j = 0; j < 256; ++j) {
+      s->z3[j] += a_k * (float)w_row[j];
+    }
+  }
+  for (int j = 0; j < 256; ++j) {
+    s->a3[j] = gelu(s->z3[j]);
+  }
+
+  /* Layer 4: 256 -> 40 (linear, HW vcvtb) */
+  memcpy(s->z4, FWD_b[4], 40 * sizeof(float));
+  for (int k = 0; k < 256; ++k) {
+    float a_k = s->a3[k];
+    const __fp16 *w_row = &FWD_W16[4][k * 40];
+    for (int j = 0; j < 40; ++j) {
+      s->z4[j] += a_k * (float)w_row[j];
+    }
+  }
+  memcpy(out_y, s->z4, 40 * sizeof(float));
+}
+
+void Neuro_PredictForward(const float *x, float *out_y)
+{
+  if (g_is_fp16) {
+    forward_fp16(x, out_y);
+  } else {
+    forward_fp32(x, out_y);
+  }
+}
+
+static void backward_fp32(const float *y_pred, const float *y_true, float *grad_x)
 {
   FwdState *s = &s_fwd;
   float dy[40];
@@ -158,7 +250,7 @@ static void forward_net_backward(const float *y_pred, const float *y_true, float
   for (int k = 0; k < 256; ++k) {
     float sum = 0.0f;
     for (int j = 0; j < 40; ++j) {
-      sum += dy[j] * FWD_W[4][k * 40 + j];
+      sum += dy[j] * FWD_W32[4][k * 40 + j];
     }
     s_da[k] = sum;
   }
@@ -170,7 +262,7 @@ static void forward_net_backward(const float *y_pred, const float *y_true, float
   for (int k = 0; k < 512; ++k) {
     float sum = 0.0f;
     for (int j = 0; j < 256; ++j) {
-      sum += s_dz[j] * FWD_W[3][k * 256 + j];
+      sum += s_dz[j] * FWD_W32[3][k * 256 + j];
     }
     s_da[k] = sum;
   }
@@ -182,7 +274,7 @@ static void forward_net_backward(const float *y_pred, const float *y_true, float
   for (int k = 0; k < 1024; ++k) {
     float sum = 0.0f;
     for (int j = 0; j < 512; ++j) {
-      sum += s_dz[j] * FWD_W[2][k * 512 + j];
+      sum += s_dz[j] * FWD_W32[2][k * 512 + j];
     }
     s_da[k] = sum;
   }
@@ -194,7 +286,7 @@ static void forward_net_backward(const float *y_pred, const float *y_true, float
   for (int k = 0; k < 512; ++k) {
     float sum = 0.0f;
     for (int j = 0; j < 1024; ++j) {
-      sum += s_dz[j] * FWD_W[1][k * 1024 + j];
+      sum += s_dz[j] * FWD_W32[1][k * 1024 + j];
     }
     s_da[k] = sum;
   }
@@ -206,9 +298,90 @@ static void forward_net_backward(const float *y_pred, const float *y_true, float
   for (int k = 0; k < 7; ++k) {
     float sum = 0.0f;
     for (int j = 0; j < 512; ++j) {
-      sum += s_dz[j] * FWD_W[0][k * 512 + j];
+      sum += s_dz[j] * FWD_W32[0][k * 512 + j];
     }
     grad_x[k] = sum;
+  }
+}
+
+static void backward_fp16(const float *y_pred, const float *y_true, float *grad_x)
+{
+  FwdState *s = &s_fwd;
+  float dy[40];
+
+  for (int i = 0; i < 40; ++i) {
+    dy[i] = (2.0f / 40.0f) * (y_pred[i] - y_true[i]);
+  }
+
+  /* Layer 4 backward: dy (40) * W4^T (40 x 256) -> da3 (256) */
+  for (int k = 0; k < 256; ++k) {
+    float sum = 0.0f;
+    const __fp16 *w_row = &FWD_W16[4][k * 40];
+    for (int j = 0; j < 40; ++j) {
+      sum += dy[j] * (float)w_row[j];
+    }
+    s_da[k] = sum;
+  }
+
+  /* Layer 3 backward: da3 (256) * deriv(z3) -> dz3 (256), dz3 * W3^T -> da2 (512) */
+  for (int j = 0; j < 256; ++j) {
+    s_dz[j] = s_da[j] * gelu_deriv(s->z3[j]);
+  }
+  for (int k = 0; k < 512; ++k) {
+    float sum = 0.0f;
+    const __fp16 *w_row = &FWD_W16[3][k * 256];
+    for (int j = 0; j < 256; ++j) {
+      sum += s_dz[j] * (float)w_row[j];
+    }
+    s_da[k] = sum;
+  }
+
+  /* Layer 2 backward: da2 (512) * deriv(z2) -> dz2 (512), dz2 * W2^T -> da1 (1024) */
+  for (int j = 0; j < 512; ++j) {
+    s_dz[j] = s_da[j] * gelu_deriv(s->z2[j]);
+  }
+  for (int k = 0; k < 1024; ++k) {
+    float sum = 0.0f;
+    const __fp16 *w_row = &FWD_W16[2][k * 512];
+    for (int j = 0; j < 512; ++j) {
+      sum += s_dz[j] * (float)w_row[j];
+    }
+    s_da[k] = sum;
+  }
+
+  /* Layer 1 backward: da1 (1024) * deriv(z1) -> dz1 (1024), dz1 * W1^T -> da0 (512) */
+  for (int j = 0; j < 1024; ++j) {
+    s_dz[j] = s_da[j] * gelu_deriv(s->z1[j]);
+  }
+  for (int k = 0; k < 512; ++k) {
+    float sum = 0.0f;
+    const __fp16 *w_row = &FWD_W16[1][k * 1024];
+    for (int j = 0; j < 1024; ++j) {
+      sum += s_dz[j] * (float)w_row[j];
+    }
+    s_da[k] = sum;
+  }
+
+  /* Layer 0 backward: da0 (512) * deriv(z0) -> dz0 (512), dz0 * W0^T -> grad_x (7) */
+  for (int j = 0; j < 512; ++j) {
+    s_dz[j] = s_da[j] * gelu_deriv(s->z0[j]);
+  }
+  for (int k = 0; k < 7; ++k) {
+    float sum = 0.0f;
+    const __fp16 *w_row = &FWD_W16[0][k * 512];
+    for (int j = 0; j < 512; ++j) {
+      sum += s_dz[j] * (float)w_row[j];
+    }
+    grad_x[k] = sum;
+  }
+}
+
+static inline void forward_net_backward(const float *y_pred, const float *y_true, float *grad_x)
+{
+  if (g_is_fp16) {
+    backward_fp16(y_pred, y_true, grad_x);
+  } else {
+    backward_fp32(y_pred, y_true, grad_x);
   }
 }
 
@@ -554,7 +727,7 @@ uint8_t Neuro_Init(void)
   SCB_CleanInvalidateDCache();
 
   uint32_t magic = *(volatile uint32_t *)QSPI_BASE_ADDR;
-  if (magic != FWD_MAGIC) {
+  if (magic != FWD16_MAGIC && magic != FWD_MAGIC) {
     /* Need to burn FWD to QSPI */
     if (Neuro_BurnFwdToQspi() != NEURO_OK) {
       return NEURO_ERROR;
@@ -573,10 +746,15 @@ uint8_t Neuro_BurnFwdToQspi(void)
   UINT bytes_read;
   FIL f;
   char msg[80];
+  const char *burn_file = "FWD_FP16.BIN";
 
-  res = f_open(&f, "FWD_FP32.BIN", FA_READ);
+  res = f_open(&f, burn_file, FA_READ);
   if (res != FR_OK) {
-    CDC_SendResponse("[QSPI] Error: Cannot open FWD_FP32.BIN!\r\n");
+    burn_file = "FWD_FP32.BIN";
+    res = f_open(&f, burn_file, FA_READ);
+  }
+  if (res != FR_OK) {
+    CDC_SendResponse("[QSPI] Error: Cannot open FWD_FP16.BIN or FWD_FP32.BIN!\r\n");
     return NEURO_ERROR;
   }
 
@@ -585,6 +763,9 @@ uint8_t Neuro_BurnFwdToQspi(void)
 
   uint32_t total_size = f_size(&f);
   uint32_t block_count = (total_size + 65535) / 65536;
+
+  snprintf(msg, sizeof(msg), "[QSPI] Flashing %s (%lu KB)...\r\n", burn_file, total_size / 1024);
+  CDC_SendResponse(msg);
 
   snprintf(msg, sizeof(msg), "[QSPI] Erasing %lu blocks (64KB each)...\r\n", block_count);
   CDC_SendResponse(msg);

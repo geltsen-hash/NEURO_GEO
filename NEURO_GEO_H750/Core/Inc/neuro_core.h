@@ -13,6 +13,7 @@ extern "C" {
 #define NEURO_ERROR   1
 
 #define FWD_MAGIC     0x46574431  /* 'FWD1' */
+#define FWD16_MAGIC   0x46573136  /* 'FW16' */
 #define INV_MAGIC     0x494E5631  /* 'INV1' */
 #define SCAL_MAGIC    0x5343414C  /* 'SCAL' */
 #define SYN1_MAGIC    0x53594E31  /* 'SYN1' */
@@ -25,6 +26,7 @@ extern float g_scale_X[7];
 extern float g_mean_Y[40];
 extern float g_scale_Y[40];
 extern bool g_neuro_ready;
+extern bool g_is_fp16;
 
 /* Core lifecycle */
 uint8_t Neuro_Init(void);
