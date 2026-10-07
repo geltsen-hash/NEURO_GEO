@@ -38,7 +38,11 @@ void MX_QUADSPI_Init(void)
 
   /* USER CODE END QUADSPI_Init 1 */
   hqspi.Instance = QUADSPI;
-  hqspi.Init.ClockPrescaler = 2-1;
+#if MCU_CORE_CLOCK_MHZ == 120
+  hqspi.Init.ClockPrescaler = 1-1; /* D1HCLK = 120MHz, Prescaler = 1 -> QSPI CLK = 120MHz */
+#else
+  hqspi.Init.ClockPrescaler = 2-1; /* D1HCLK = 240MHz, Prescaler = 2 -> QSPI CLK = 120MHz */
+#endif
   hqspi.Init.FifoThreshold = 32;
   hqspi.Init.SampleShifting = QSPI_SAMPLE_SHIFTING_HALFCYCLE;
   hqspi.Init.FlashSize = 23-1;

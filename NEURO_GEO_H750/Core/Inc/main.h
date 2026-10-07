@@ -64,6 +64,13 @@ void Error_Handler(void);
 #define PE3_GPIO_Port GPIOE
 #define K1_Pin GPIO_PIN_13
 #define K1_GPIO_Port GPIOC
+
+/* Clock & Thermal Profile selection:
+ * 480: 480 MHz (VOS0, max speed 5.5..9.3s, junction temp ~45..60 C)
+ * 240: 240 MHz (VOS1, optimal for downhole tools: 8.7..12s, temp ~31..34 C)
+ * 120: 120 MHz (VOS2, ultra-low power: 16..23s, temp ~28..30 C)
+ */
+#define MCU_CORE_CLOCK_MHZ   240
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
